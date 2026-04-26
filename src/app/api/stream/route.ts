@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getStreamUrl } from "@/lib/tuya";
 import { isOperationalHour, operationalHoursLabel } from "@/lib/time";
 
@@ -24,8 +25,21 @@ export async function GET(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // 2. Jam operasional (taruh setelah auth biar pesan jelas ke user yang valid)
-  if (!isOperationalHour()) {
+  // 2. Role check — admin bypass jam operasional & akses check
+  const { data: profile } = await supabase
+    .from("user_profiles")
+    .select("role, is_active")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile || !profile.is_active) {
+    return Response.json({ error: "Akun tidak aktif" }, { status: 403 });
+  }
+
+  const isAdmin = profile.role === "super_admin";
+
+  // 3. Jam operasional — parent kena restriction, admin bebas
+  if (!isAdmin && !isOperationalHour()) {
     return Response.json(
       {
         error: `Streaming hanya tersedia setiap hari pukul ${operationalHoursLabel()} WIB`,
@@ -35,24 +49,41 @@ export async function GET(req: Request) {
     );
   }
 
-  // 3. Akses check — pastikan user punya akses ke device ini
-  // RLS sudah filter, tapi explicit check biar response code akurat (403 vs 404)
-  const { data: access } = await supabase
-    .from("camera_access")
-    .select("camera_id, cameras!inner(device_id, is_active)")
-    .eq("parent_id", user.id)
-    .eq("cameras.device_id", deviceId)
-    .eq("cameras.is_active", true)
-    .maybeSingle();
+  // 4. Akses check — admin bypass, parent harus punya entry di camera_access
+  if (!isAdmin) {
+    const { data: access } = await supabase
+      .from("camera_access")
+      .select("camera_id, cameras!inner(device_id, is_active)")
+      .eq("parent_id", user.id)
+      .eq("cameras.device_id", deviceId)
+      .eq("cameras.is_active", true)
+      .maybeSingle();
 
-  if (!access) {
-    return Response.json(
-      { error: "Anda tidak memiliki akses ke kamera ini" },
-      { status: 403 }
-    );
+    if (!access) {
+      return Response.json(
+        { error: "Anda tidak memiliki akses ke kamera ini" },
+        { status: 403 }
+      );
+    }
+  } else {
+    // Admin: cukup pastikan kamera ada & aktif (defensive check)
+    const admin = createAdminClient();
+    const { data: cam } = await admin
+      .from("cameras")
+      .select("id")
+      .eq("device_id", deviceId)
+      .eq("is_active", true)
+      .maybeSingle();
+
+    if (!cam) {
+      return Response.json(
+        { error: "Kamera tidak ditemukan atau dinonaktifkan" },
+        { status: 404 }
+      );
+    }
   }
 
-  // 4. Tuya hit — fresh, no-cache. URL expire ~10 menit.
+  // 5. Tuya hit — fresh, no-cache. URL expire ~10 menit.
   try {
     const url = await getStreamUrl(deviceId);
     return Response.json(
