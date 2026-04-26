@@ -3,10 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuthStore } from "@/stores";
-import { ShieldCheck, Construction, Users, Database, Lock, BookOpen } from "lucide-react";
+import { ShieldCheck, Construction, Users, Database, Lock } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FullPageLoader } from "@/components/shared";
-import { ROUTES } from "@/constants";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -25,20 +24,11 @@ export default function AdminPage() {
 
   const adminMenus = [
     {
-      title: "Panduan Setup Kamera",
-      description: "Langkah-langkah menghubungkan kamera Bardi ke sistem untuk pemilik daycare",
-      icon: BookOpen,
-      color: "text-teal-600",
-      bg: "bg-teal-50",
-      href: ROUTES.ADMIN_SETUP_GUIDE,
-    },
-    {
       title: "Manajemen Pengguna",
       description: "Kelola akun dan hak akses pengguna sistem",
       icon: Users,
       color: "text-blue-600",
       bg: "bg-blue-50",
-      href: null,
     },
     {
       title: "Data Master",
@@ -46,7 +36,6 @@ export default function AdminPage() {
       icon: Database,
       color: "text-purple-600",
       bg: "bg-purple-50",
-      href: null,
     },
     {
       title: "Hak Akses",
@@ -54,7 +43,6 @@ export default function AdminPage() {
       icon: Lock,
       color: "text-orange-600",
       bg: "bg-orange-50",
-      href: null,
     },
   ];
 
@@ -94,14 +82,7 @@ export default function AdminPage() {
           {adminMenus.map((menu) => {
             const Icon = menu.icon;
             return (
-              <Card
-                key={menu.title}
-                onClick={() => menu.href && router.push(menu.href)}
-                className={`border transition-shadow ${menu.href
-                  ? "hover:shadow-md cursor-pointer"
-                  : "opacity-60 cursor-default"
-                  }`}
-              >
+              <Card key={menu.title} className="border hover:shadow-md transition-shadow cursor-pointer opacity-60">
                 <CardHeader className="pb-2">
                   <div className={`w-10 h-10 rounded-xl ${menu.bg} flex items-center justify-center mb-2`}>
                     <Icon className={`h-5 w-5 ${menu.color}`} />
@@ -110,12 +91,10 @@ export default function AdminPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-xs text-muted-foreground">{menu.description}</p>
-                  {!menu.href && (
-                    <div className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground">
-                      <Construction className="h-3 w-3" />
-                      Segera hadir
-                    </div>
-                  )}
+                  <div className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground">
+                    <Construction className="h-3 w-3" />
+                    Segera hadir
+                  </div>
                 </CardContent>
               </Card>
             );
