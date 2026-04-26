@@ -1,0 +1,1 @@
+export { ROUTES, APP_CONFIG } from "./routes";
