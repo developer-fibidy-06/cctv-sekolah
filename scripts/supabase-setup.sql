@@ -1,7 +1,10 @@
 -- ============================================================
--- DAYCARE CCTV - NUCLEAR SETUP
+-- DAYCARE CCTV — NUCLEAR SETUP (FIXED v2)
 -- Run SEKALI di SQL Editor Supabase.
 -- Drop semua → recreate clean dengan schema final.
+--
+-- v2 fix: drop tables BEFORE triggers (CASCADE auto-drops triggers).
+-- DROP TRIGGER IF EXISTS error di fresh DB karena butuh tabel exist.
 -- ============================================================
 --
 -- Schema:
@@ -11,27 +14,33 @@
 --   cameras (Tuya device mapping)
 --   camera_access (parent ↔ camera many-to-many)
 --
--- RLS:
---   - parent: read profil sendiri, kamera & access yang di-assign aja
---   - super_admin: bypass via service_role di server actions
+-- Security model:
+--   - RLS untuk parent (read-only access ke data mereka)
+--   - Column-level GRANT untuk prevent parent ubah role/is_active sendiri
+--   - Server actions pake service_role (bypass RLS) untuk admin operations
 -- ============================================================
 
 
 -- ============================================================
 -- 0. NUCLEAR DROP
 -- ============================================================
-
-DROP TRIGGER IF EXISTS trg_on_auth_user_created    ON auth.users;
-DROP TRIGGER IF EXISTS trg_user_profiles_updated_at ON public.user_profiles;
-DROP TRIGGER IF EXISTS trg_cameras_updated_at       ON public.cameras;
-
-DROP FUNCTION IF EXISTS public.handle_new_user()    CASCADE;
-DROP FUNCTION IF EXISTS public.handle_updated_at()  CASCADE;
-DROP FUNCTION IF EXISTS public.get_my_role()        CASCADE;
+-- Drop tables DULU dengan CASCADE — triggers yang nempel di tabel
+-- otomatis ke-drop juga. Lebih aman daripada DROP TRIGGER duluan
+-- karena DROP TRIGGER butuh tabelnya exist (gagal di fresh DB).
+-- ============================================================
 
 DROP TABLE IF EXISTS public.camera_access CASCADE;
 DROP TABLE IF EXISTS public.cameras       CASCADE;
 DROP TABLE IF EXISTS public.user_profiles CASCADE;
+
+-- Trigger di auth.users (bukan public schema) — drop terpisah.
+-- auth.users SELALU exist di Supabase, jadi DROP TRIGGER aman di sini.
+DROP TRIGGER IF EXISTS trg_on_auth_user_created ON auth.users;
+
+-- Functions tidak punya dependency ke tabel public — aman drop kapan aja.
+DROP FUNCTION IF EXISTS public.handle_new_user()    CASCADE;
+DROP FUNCTION IF EXISTS public.handle_updated_at()  CASCADE;
+DROP FUNCTION IF EXISTS public.get_my_role()        CASCADE;
 
 
 -- ============================================================
@@ -95,7 +104,7 @@ CREATE INDEX idx_camera_access_camera ON public.camera_access(camera_id);
 
 
 -- ============================================================
--- 5. HELPER FUNCTION (bypass RLS untuk role check)
+-- 5. HELPER FUNCTION (SECURITY DEFINER bypass RLS untuk role check)
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION public.get_my_role()
@@ -115,7 +124,6 @@ ALTER TABLE public.camera_access ENABLE ROW LEVEL SECURITY;
 
 -- ----- user_profiles policies -----
 
--- SELECT: lihat profil sendiri ATAU super_admin lihat semua
 CREATE POLICY "user_profiles_select"
   ON public.user_profiles FOR SELECT
   USING (
@@ -123,7 +131,6 @@ CREATE POLICY "user_profiles_select"
     OR public.get_my_role() = 'super_admin'
   );
 
--- INSERT: trigger system (id = diri sendiri) atau super_admin
 CREATE POLICY "user_profiles_insert"
   ON public.user_profiles FOR INSERT
   WITH CHECK (
@@ -131,22 +138,17 @@ CREATE POLICY "user_profiles_insert"
     OR public.get_my_role() = 'super_admin'
   );
 
--- UPDATE: user update profil sendiri (TIDAK bisa ganti role & is_active)
-CREATE POLICY "user_profiles_update_own"
+CREATE POLICY "user_profiles_update"
   ON public.user_profiles FOR UPDATE
-  USING (auth.uid() = id)
+  USING (
+    auth.uid() = id
+    OR public.get_my_role() = 'super_admin'
+  )
   WITH CHECK (
     auth.uid() = id
-    AND role      = public.get_my_role()
-    AND is_active = (SELECT is_active FROM public.user_profiles WHERE id = auth.uid())
+    OR public.get_my_role() = 'super_admin'
   );
 
--- UPDATE: super_admin update siapa saja
-CREATE POLICY "user_profiles_update_admin"
-  ON public.user_profiles FOR UPDATE
-  USING (public.get_my_role() = 'super_admin');
-
--- DELETE: hanya super_admin
 CREATE POLICY "user_profiles_delete_admin"
   ON public.user_profiles FOR DELETE
   USING (public.get_my_role() = 'super_admin');
@@ -154,7 +156,6 @@ CREATE POLICY "user_profiles_delete_admin"
 
 -- ----- cameras policies -----
 
--- SELECT: parent baca kamera AKTIF yang punya akses, super_admin lihat semua
 CREATE POLICY "cameras_select_parent"
   ON public.cameras FOR SELECT
   USING (
@@ -170,42 +171,15 @@ CREATE POLICY "cameras_select_admin"
   ON public.cameras FOR SELECT
   USING (public.get_my_role() = 'super_admin');
 
--- INSERT/UPDATE/DELETE: hanya super_admin
-CREATE POLICY "cameras_insert_admin"
-  ON public.cameras FOR INSERT
-  WITH CHECK (public.get_my_role() = 'super_admin');
-
-CREATE POLICY "cameras_update_admin"
-  ON public.cameras FOR UPDATE
-  USING (public.get_my_role() = 'super_admin');
-
-CREATE POLICY "cameras_delete_admin"
-  ON public.cameras FOR DELETE
-  USING (public.get_my_role() = 'super_admin');
-
 
 -- ----- camera_access policies -----
 
--- SELECT: parent lihat akses sendiri, super_admin lihat semua
 CREATE POLICY "camera_access_select_own"
   ON public.camera_access FOR SELECT
   USING (
     auth.uid() = parent_id
     OR public.get_my_role() = 'super_admin'
   );
-
--- INSERT/UPDATE/DELETE: hanya super_admin
-CREATE POLICY "camera_access_insert_admin"
-  ON public.camera_access FOR INSERT
-  WITH CHECK (public.get_my_role() = 'super_admin');
-
-CREATE POLICY "camera_access_update_admin"
-  ON public.camera_access FOR UPDATE
-  USING (public.get_my_role() = 'super_admin');
-
-CREATE POLICY "camera_access_delete_admin"
-  ON public.camera_access FOR DELETE
-  USING (public.get_my_role() = 'super_admin');
 
 
 -- ============================================================
@@ -232,11 +206,6 @@ CREATE TRIGGER trg_cameras_updated_at
 -- ============================================================
 -- 8. FUNCTION & TRIGGER: auto-create profile saat user signup
 -- ============================================================
---
--- Saat super admin invite ortu via auth.admin.createUser, trigger ini
--- yang auto-bikin profile-nya. Server action createParent juga upsert
--- buat overwrite role default biar jadi 'parent' + isi email & phone.
--- ============================================================
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
@@ -259,38 +228,38 @@ CREATE TRIGGER trg_on_auth_user_created
 
 
 -- ============================================================
--- 9. GRANTS
+-- 9. GRANTS — column-level untuk defense-in-depth
 -- ============================================================
 
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_profiles TO authenticated;
-GRANT SELECT                          ON public.user_profiles TO anon;
+GRANT SELECT ON public.user_profiles TO authenticated;
+GRANT INSERT (id, full_name, role, email, phone, avatar_url, is_active)
+  ON public.user_profiles TO authenticated;
+GRANT UPDATE (full_name, avatar_url, phone)
+  ON public.user_profiles TO authenticated;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.cameras       TO authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.camera_access TO authenticated;
+GRANT SELECT ON public.cameras       TO authenticated;
+GRANT SELECT ON public.camera_access TO authenticated;
 
 
 -- ============================================================
--- 10. SEED SUPER ADMIN (OPTIONAL — uncomment & ganti email)
+-- 10. SEED MOCK CAMERAS (untuk DEV_MOCK_STREAM=true)
 -- ============================================================
---
--- Cara seed super admin pertama kali:
--- 1. Daftar dulu pakai email-mu via Supabase dashboard (Authentication → Add user)
---    ATAU dari halaman /login app (signUp di Supabase auth)
--- 2. Habis itu uncomment & jalankan ini, ganti email sesuai akunmu:
---
--- UPDATE public.user_profiles
---   SET role = 'super_admin', full_name = 'Super Admin'
---   WHERE email = 'your-email@example.com';
---
--- ============================================================
+
+INSERT INTO public.cameras (device_id, label, is_active) VALUES
+  ('mockdevice001', 'Ruang Bayi',  TRUE),
+  ('mockdevice002', 'Toddler',     TRUE)
+ON CONFLICT (device_id) DO NOTHING;
 
 
 -- ============================================================
 -- SELESAI ✅
 -- ============================================================
--- Tabel: user_profiles, cameras, camera_access
--- RLS:   aktif semua (parent secured, admin via service_role)
--- Trigger: handle_new_user (auto profile), handle_updated_at
+-- Tabel:    user_profiles, cameras, camera_access
+-- Security: RLS aktif + column-level GRANT
+-- Trigger:  handle_new_user, handle_updated_at
+-- Seed:     2 mock cameras
+--
+-- Next: jalankan `node scripts/seed.js` untuk seed admin + parent test.
 -- ============================================================
