@@ -9,6 +9,7 @@ export const ROUTES = {
   ADMIN_PARENTS: "/admin/parents",
   ADMIN_PARENTS_NEW: "/admin/parents/new",
   ADMIN_ACCESS: "/admin/access",
+  ADMIN_SETUP_GUIDE: "/admin/setup-guide",
 } as const;
 
 export const APP_CONFIG = {
