@@ -141,19 +141,38 @@ async function callStreamApi(
   return res.json();
 }
 
+// =============================================
+// Mock streams — public HLS test URLs yang stabil & reliable
+// =============================================
+//
+// Pilihan stream yang dipakai (semua HTTPS, no auth, bebas play):
+//
+// 1. Mux Big Buck Bunny (VOD)
+//    - Owner: Mux.com (provider HLS profesional)
+//    - Stable sejak 2018+, jadi default reference oleh hls.js sendiri
+//
+// 2. Apple bipbop ABR (VOD, multi-bitrate)
+//    - Owner: Apple developer streaming
+//    - Stable sejak 2010 (HLS pertama kali release), digunakan di official
+//      Apple HLS documentation. Format adaptive bitrate (test ABR switching).
+//
+// HINDARI:
+// - Akamai live test (cph-p2p-msl.akamaized.net) — sering 404
+// - Stream HTTP non-HTTPS — diblok mixed-content di browser modern
+// =============================================
+
+const MOCK_STREAMS: Record<string, string> = {
+  mockdevice001: "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+  mockdevice002:
+    "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8",
+};
+
+const MOCK_FALLBACK = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+
 export async function getStreamUrl(deviceId: string): Promise<string> {
   // ===== MOCK MODE — dev tanpa kamera fisik =====
   if (IS_MOCK) {
-    const mocks: Record<string, string> = {
-      "mockdevice001": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-      "mockdevice002":
-        "https://cph-p2p-msl.akamaized.net/hls/live/2000341/test/master.m3u8",
-    };
-    return (
-      mocks[deviceId] ??
-      mocks["mockdevice001"] ??
-      "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-    );
+    return MOCK_STREAMS[deviceId] ?? MOCK_FALLBACK;
   }
 
   // ===== PRODUCTION =====
