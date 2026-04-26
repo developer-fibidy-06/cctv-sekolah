@@ -1,9 +1,18 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { updateSession } from "@/lib/supabase/middleware";
+import { updateSession } from "@/lib/supabase/session";
 
 const publicRoutes = ["/login", "/api/auth/callback"];
 
-export async function middleware(request: NextRequest) {
+/**
+ * Next.js 16 Proxy (formerly Middleware).
+ *
+ * Runs on Node.js runtime (edge NOT supported in proxy).
+ * Handles:
+ *   - Supabase session refresh (cookie rotation)
+ *   - Auth gate for protected routes
+ *   - JSON 401 for /api/* (no redirect to /login)
+ */
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // API routes handle auth sendiri & return JSON error — bukan redirect ke /login

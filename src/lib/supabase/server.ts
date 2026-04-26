@@ -19,7 +19,7 @@ export async function createClient() {
               cookieStore.set(name, value, options)
             );
           } catch {
-            // Server Component — silently ignore (cookies set in proxy/middleware)
+            // Server Component — silently ignore (cookies set in proxy.ts)
           }
         },
       },
